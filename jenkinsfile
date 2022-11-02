@@ -1,0 +1,98 @@
+pipeline{
+    agent any
+        options {
+        gitLabConnection("jenkins") 
+    }
+    stages {
+
+        stage ("SetVariables"){
+            steps{
+                script
+                {   //seting it every time bcs they are going back to java 11 every time 
+                    env.JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"
+                    env.PATH="${env.JAVA_HOME}/bin:${env.PATH}"
+                }
+            }
+        }
+        stage ("CalculateVersion"){
+            when { branch 'release/*' }
+            steps{
+                script{
+                    sh 'echo CALCULATE VERSION STAGE' 
+                    majorMinor = env.BRANCH_NAME.split("/")[1]
+                    echo "${majorMinor}" 
+                    versionNumber = sh(script: "echo ${majorMinor}.\$(git rev-list origin/release/${majorMinor} --count)", returnStdout: true).trim()
+                    configFileProvider([configFile(fileId: 'maven-user-stg', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh "mvn versions:set -DnewVersion=${versionNumber}"
+                    } 
+                    }
+            }
+        }
+
+        stage ("MavenBuild"){
+            steps{
+                script{
+                    sh 'echo MAVEN BUILD STAGE'
+                    configFileProvider([configFile(fileId: 'maven-user-stg', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh 'mvn --settings $MAVEN_SETTINGS_XML compile' 
+                    } 
+                }
+            }
+        }
+        stage ("MavenTests"){
+            steps{
+                script{
+                    sh 'echo MAVEN TEST STAGE'
+                    configFileProvider([configFile(fileId: 'maven-user-stg', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh 'mvn --settings $MAVEN_SETTINGS_XML test' 
+                    } 
+                }
+            }
+        }
+        stage ("MavenPackage"){
+            steps{
+                script{
+                    sh 'echo MAVEN PACKAGE STAGE'
+                    configFileProvider([configFile(fileId: 'maven-user-stg', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh 'mvn --settings $MAVEN_SETTINGS_XML package' 
+                    } 
+                    }
+                }
+        }
+        stage ("MavenVerify"){
+            steps{
+                script{
+                    sh 'echo MAVEN VERIFY STAGE'
+                    configFileProvider([configFile(fileId: 'maven-user-stg', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh 'mvn --settings $MAVEN_SETTINGS_XML verify' 
+                    } 
+                    }
+                }
+        }
+        stage ("Publishing")
+        {
+            when { anyOf { branch 'master'; branch 'release/*' } }
+            steps
+            {
+                script{
+                    echo 'PUBLISH STAGE'
+                    configFileProvider([configFile(fileId: 'maven-user-stg', variable: 'MAVEN_SETTINGS_XML')]) {
+                        sh 'mvn --settings $MAVEN_SETTINGS_XML deploy' 
+                    } 
+                    }
+            }
+        }
+        stage ("Tagging")
+        {
+            when { branch 'release/*' }
+            steps
+            {
+                echo 'TAGGING STAGE'
+                sh "git clean -n -d"
+                sh "git clean --force -n -d"
+                sh "git tag -a ${versionNumber} -m 'version ${versionNumber}}'"
+                sh "git push origin --tags"
+            }
+        }
+    }
+}
